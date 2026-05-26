@@ -1,0 +1,8 @@
+.env
+*.jsonl
+cvar_status.json
+__pycache__/
+.DS_Store
+*.pyc
+venv/
+.venv/
