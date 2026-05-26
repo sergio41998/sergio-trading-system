@@ -42,7 +42,7 @@ PORTFOLIO_TICKERS = [
 ]
 
 # Tickers candidatos a nuevas posiciones (próximas entradas según análisis previo)
-WATCHLIST_TICKERS = ["VST", "AXON"]
+WATCHLIST_TICKERS = ["MU", "DDOG", "FSLR", "ASTS", "AXON"]
 
 LOG_FILE = "trading_decisions.jsonl"
 
