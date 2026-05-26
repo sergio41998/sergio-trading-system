@@ -1,0 +1,130 @@
+"""
+eToro API Client — Fase 1
+Sergio's personal trading system
+"""
+
+import os
+import uuid
+import json
+import requests
+from datetime import datetime
+from tabulate import tabulate
+
+BASE_URL = "https://public-api.etoro.com/api/v1"
+MODE = "real"  # "demo" | "real"
+
+API_KEY  = os.environ.get("ETORO_API_KEY",  "YOUR_API_KEY_HERE")
+USER_KEY = os.environ.get("ETORO_USER_KEY", "YOUR_USER_KEY_HERE")
+
+INSTRUMENT_MAP = {
+    1001: "AAPL",   1002: "GOOG",   1003: "META",   1004: "MSFT",
+    1005: "AMZN",   1024: "KO",     1032: "UNH",    1033: "RTX",
+    1137: "NVDA",   1234: "AIR.PA", 1320: "CABK",   1330: "IBE",
+    1465: "GILD",   1545: "NOC",    1832: "AMD",    2040: "IAG",
+    2312: "LNVGY",  2587: "RHM",    4124: "PANW",   4236: "AVGO",
+    4363: "VST",    4481: "TSM",    4509: "ASML",   5506: "CRWD",
+    7991: "PLTR",   8687: "SMFG",   8867: "VRT",    8956: "BWXT",
+    9006: "ERJ",    9045: "UCTT",   9956: "OKLO",
+}
+
+
+def _headers():
+    return {
+        "x-api-key":    API_KEY,
+        "x-user-key":   USER_KEY,
+        "x-request-id": str(uuid.uuid4()),
+        "Content-Type": "application/json",
+    }
+
+def get(endpoint, params=None):
+    url = f"{BASE_URL}{endpoint}"
+    resp = requests.get(url, headers=_headers(), params=params or {}, timeout=15)
+    resp.raise_for_status()
+    return resp.json()
+
+def get_portfolio():
+    return get(f"/trading/info/{MODE}/pnl")
+
+def get_account_balance():
+    data = get(f"/trading/info/{MODE}/pnl")
+    cp = data.get("clientPortfolio", {})
+    positions = cp.get("positions", [])
+    mirrors   = cp.get("mirrors", [])
+    total_invested = sum(p.get("amount", 0) for p in positions)
+    total_pnl      = sum(p.get("unrealizedPnL", {}).get("pnL", 0) for p in positions)
+    for m in mirrors:
+        total_invested += sum(p.get("amount", 0) for p in m.get("positions", []))
+        total_pnl      += sum(p.get("unrealizedPnL", {}).get("pnL", 0) for p in m.get("positions", []))
+    return {
+        "equity":        cp.get("credit", total_invested + total_pnl),
+        "unrealizedPnL": total_pnl,
+        "invested":      total_invested,
+    }
+
+def search_instrument(symbol: str) -> list:
+    try:
+        data = get("/instruments/search", params={"q": symbol, "limit": 5})
+        return data.get("instruments", [])
+    except:
+        return []
+
+def print_account(account):
+    invested = account.get("invested", 0)
+    pl       = account.get("unrealizedPnL", 0)
+    pl_pct   = (pl / invested * 100) if invested else 0
+    print(f"\n{'─'*45}")
+    print(f"  Modo         : {MODE.upper()}")
+    print(f"  Invertido    : ${invested:,.2f}")
+    print(f"  P&L abierto  : ${pl:,.2f}  ({pl_pct:.2f}%)")
+    print(f"{'─'*45}\n")
+
+def print_portfolio(data):
+    cp        = data.get("clientPortfolio", {})
+    positions = cp.get("positions", [])
+    mirrors   = cp.get("mirrors", [])
+
+    # Agrupar por ticker
+    grouped = {}
+    for p in positions:
+        iid    = p.get("instrumentID")
+        ticker = INSTRUMENT_MAP.get(iid, f"ID:{iid}")
+        pnl    = p.get("unrealizedPnL", {}).get("pnL", 0)
+        amt    = p.get("amount", 0)
+        if ticker not in grouped:
+            grouped[ticker] = {"invested": 0, "pnl": 0}
+        grouped[ticker]["invested"] += amt
+        grouped[ticker]["pnl"]      += pnl
+
+    if grouped:
+        rows = []
+        for ticker, v in grouped.items():
+            amt = v["invested"]
+            pl  = v["pnl"]
+            pct = (pl / amt * 100) if amt else 0
+            rows.append([ticker, f"${amt:.0f}", f"${pl:.2f}", f"{pct:.1f}%"])
+
+        rows.sort(key=lambda r: float(r[2].replace("$","").replace("-","")), reverse=True)
+        print(f"📌 Posiciones ({len(grouped)} tickers, {len(positions)} tramos):")
+        print(tabulate(rows,
+                       headers=["Ticker", "Invertido", "P&L $", "P&L %"],
+                       tablefmt="rounded_outline"))
+
+    if mirrors:
+        print(f"\n🔁 Copy portfolios: {len(mirrors)}")
+        for m in mirrors:
+            pl = sum(p.get("unrealizedPnL",{}).get("pnL",0) for p in m.get("positions",[]))
+            print(f"  → {m.get('parentUsername','?'):20} | {len(m.get('positions',[]))} pos | P&L: ${pl:.2f}")
+
+def main():
+    print(f"\n🤖 eToro Client | Modo: {MODE.upper()} | {datetime.now().strftime('%Y-%m-%d %H:%M')}\n")
+    try:
+        data    = get_portfolio()
+        account = get_account_balance()
+        print_account(account)
+        print_portfolio(data)
+    except Exception as e:
+        print(f"[ERROR] {e}")
+    print("\n✅ OK\n")
+
+if __name__ == "__main__":
+    main()
