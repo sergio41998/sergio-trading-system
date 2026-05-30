@@ -1,6 +1,7 @@
 {
-  "_instrucciones": "Edita este archivo cada semana con tus niveles. El monitor ejecuta cuando el precio toca el trigger. Pon active=false para desactivar una orden sin borrarla.",
-  "_flujo": "1) Domingo: lanza trading_agents_etoro.py → 2) Lee señales → 3) Edita este archivo con tus niveles → 4) Lanza price_monitor.py → 5) El bot ejecuta automáticamente",
+  "_instrucciones": "Edita este archivo cada mes con tus niveles. El monitor ejecuta cuando el precio toca el trigger.",
+  "_flujo": "1) Domingo: lanza trading_agents_etoro.py → 2) Lee señales → 3) Edita niveles → 4) Lanza price_monitor.py",
+  "_nota": "Órdenes desactivadas hasta post-earnings PANW(2jun), CRWD(3jun), AVGO(3jun). Reactivar el 4 de junio.",
   "orders": [
     {
       "ticker":        "NVDA",
@@ -9,37 +10,37 @@
       "trigger_type":  "below",
       "amount_eur":    400,
       "stop_loss_pct": 7,
-      "thesis":        "Entrada post-earnings en soporte 10EMA ($208-215). Tesis AI infrastructure intacta. PEG 0.72, FCF $96B. Esperar confirmación que earnings no rompen tesis.",
-      "active":        true
+      "thesis":        "Entrada post-earnings en soporte 10EMA. Tesis AI infrastructure intacta. PEG 0.72, FCF $96B.",
+      "active":        false
+    },
+    {
+      "ticker":        "PANW",
+      "action":        "buy",
+      "trigger_price": 0,
+      "trigger_type":  "above",
+      "amount_eur":    300,
+      "stop_loss_pct": 7,
+      "thesis":        "Ampliar post-earnings si reacción positiva. Señal HOLD Overweight. Earnings 2 junio.",
+      "active":        false
     },
     {
       "ticker":        "VST",
       "action":        "buy",
-      "trigger_price": 58.0,
+      "trigger_price": 120.0,
       "trigger_type":  "below",
       "amount_eur":    300,
       "stop_loss_pct": 8,
-      "thesis":        "Ampliar posición existente en soporte. Tesis energía para AI datacenters. Vistra es el mayor operador nuclear de EE.UU. Posición actual en -10%.",
-      "active":        true
-    },
-    {
-      "ticker":        "PLTR",
-      "action":        "buy",
-      "trigger_price": 115.0,
-      "trigger_type":  "below",
-      "amount_eur":    300,
-      "stop_loss_pct": 8,
-      "thesis":        "Cuarto tramo en consolidación. Tesis gobierno + enterprise AI. Esperar señal clara de TradingAgents antes de activar.",
+      "thesis":        "Ampliar en soporte. Tesis energía AI datacenters intacta. Actualizar nivel post-análisis.",
       "active":        false
     },
     {
-      "ticker":        "ASML",
+      "ticker":        "RHM",
       "action":        "buy",
-      "trigger_price": 620.0,
+      "trigger_price": 0,
       "trigger_type":  "below",
-      "amount_eur":    350,
-      "stop_loss_pct": 6,
-      "thesis":        "Tercer tramo si hay corrección significativa. Monopolio en EUV litografía. Solo activar si macro deteriora y hay entrada clara.",
+      "amount_eur":    200,
+      "stop_loss_pct": 8,
+      "thesis":        "Posición en -6.2%. Tesis defensa europea intacta. Valorar ampliar si cae más.",
       "active":        false
     }
   ]
