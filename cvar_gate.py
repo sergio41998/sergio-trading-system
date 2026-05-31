@@ -57,6 +57,47 @@ YF_TICKER_MAP = {
 }
 
 
+# ─── Portfolio real desde eToro API ────────────────────────────────────────────
+
+def build_portfolio_from_etoro() -> tuple:
+    """
+    Construye pesos reales del portfolio desde la API de eToro.
+    Retorna (weights_dict, nav_eur, source_label).
+    Si falla, retorna (None, None, "pesos manuales (fallback)").
+    """
+    try:
+        from etoro_client import get_portfolio as _get_portfolio, get_account_balance, INSTRUMENT_MAP
+
+        data    = _get_portfolio()
+        account = get_account_balance()
+
+        cp        = data.get("clientPortfolio", {})
+        positions = cp.get("positions", [])
+
+        amounts = {}
+        for p in positions:
+            ticker = INSTRUMENT_MAP.get(p.get("instrumentID"))
+            if ticker:
+                amounts[ticker] = amounts.get(ticker, 0) + p.get("amount", 0)
+
+        total = sum(amounts.values())
+        if total == 0:
+            return None, None, "pesos manuales (fallback — sin posiciones)"
+
+        weights = {t: amt / total for t, amt in amounts.items()}
+
+        # eToro reporta en USD — convertir a EUR con tasa aproximada
+        nav_usd = account.get("invested", 0) + account.get("unrealizedPnL", 0)
+        nav_eur = round(nav_usd / 1.08, 0) if nav_usd else NAV_EUR
+
+        return weights, nav_eur, f"portfolio real ({len(weights)} tickers, €{nav_eur:,.0f})"
+
+    except Exception as e:
+        print(f"  ⚠️  No se pudo cargar portfolio real: {e}")
+        print(f"  → Usando pesos manuales como fallback")
+        return None, None, "pesos manuales (fallback)"
+
+
 # ─── Telegram ──────────────────────────────────────────────────────────────────
 
 def send_telegram(message: str) -> bool:
@@ -119,11 +160,12 @@ def get_market_data() -> dict:
     return closes
 
 
-def compute_portfolio_returns(closes) -> tuple:
+def compute_portfolio_returns(closes, portfolio=None) -> tuple:
     """Retornos diarios del portfolio ponderado."""
-    portfolio_tickers = [t for t in PORTFOLIO.keys() if t in closes.columns]
-    total_w  = sum(PORTFOLIO[t] for t in portfolio_tickers)
-    weights  = np.array([PORTFOLIO[t] / total_w for t in portfolio_tickers])
+    port = portfolio or PORTFOLIO
+    portfolio_tickers = [t for t in port.keys() if t in closes.columns]
+    total_w  = sum(port[t] for t in portfolio_tickers)
+    weights  = np.array([port[t] / total_w for t in portfolio_tickers])
     ret_df   = closes[portfolio_tickers].pct_change().dropna()
     port_ret = ret_df.values @ weights
     return port_ret, ret_df
@@ -214,9 +256,11 @@ def get_cvar_trend(current_cvar: float) -> str:
 
 # ─── Punto 3: P&L del día anterior ────────────────────────────────────────────
 
-def get_yesterday_pnl(closes) -> dict:
+def get_yesterday_pnl(closes, portfolio=None, nav_eur=None) -> dict:
     """P&L estimado del portfolio en el día anterior."""
-    portfolio_tickers = [t for t in PORTFOLIO.keys() if t in closes.columns]
+    port = portfolio or PORTFOLIO
+    nav  = nav_eur   or NAV_EUR
+    portfolio_tickers = [t for t in port.keys() if t in closes.columns]
     if not portfolio_tickers or len(closes) < 2:
         return {}
 
@@ -228,10 +272,10 @@ def get_yesterday_pnl(closes) -> dict:
             yesterday_ret[t] = ret
 
     # P&L ponderado
-    total_w   = sum(PORTFOLIO[t] for t in portfolio_tickers)
-    port_ret  = sum(yesterday_ret.get(t, 0) * PORTFOLIO[t] / total_w
+    total_w   = sum(port[t] for t in portfolio_tickers)
+    port_ret  = sum(yesterday_ret.get(t, 0) * port[t] / total_w
                     for t in portfolio_tickers)
-    port_eur  = port_ret / 100 * NAV_EUR
+    port_eur  = port_ret / 100 * nav
 
     # Top movers
     sorted_ret = sorted(yesterday_ret.items(), key=lambda x: abs(x[1]), reverse=True)
@@ -267,15 +311,16 @@ def pnl_to_text(pnl: dict) -> str:
 
 # ─── Punto 4: Earnings de la semana ───────────────────────────────────────────
 
-def get_upcoming_earnings() -> list:
+def get_upcoming_earnings(portfolio=None) -> list:
     """Earnings de tus posiciones en los próximos 7 días via yfinance."""
     import yfinance as yf
 
+    port     = portfolio or PORTFOLIO
     upcoming = []
     today    = datetime.today().date()
     week_out = today + timedelta(days=7)
 
-    for ticker in list(PORTFOLIO.keys())[:15]:  # top 15 posiciones
+    for ticker in list(port.keys())[:15]:  # top 15 posiciones
         try:
             yf_ticker = YF_TICKER_MAP.get(ticker, ticker)
             tk        = yf.Ticker(yf_ticker)
@@ -378,9 +423,10 @@ def compute_cvar(returns: np.ndarray) -> dict:
         "n_days":   len(returns),
     }
 
-def evaluate_risk(metrics: dict) -> dict:
+def evaluate_risk(metrics: dict, nav_eur=None) -> dict:
+    nav      = nav_eur or NAV_EUR
     cvar     = metrics["cvar"]
-    cvar_eur = cvar * NAV_EUR
+    cvar_eur = cvar * nav
 
     if cvar < CVAR_THRESHOLD * 0.5:
         level, color, action, orders = "BAJO",     "🟢", "Sistema nominal. Operar según plan.", "normal"
@@ -447,7 +493,7 @@ def build_executive_summary(evaluation: dict, market_mode: dict,
 
 def build_full_message(metrics: dict, evaluation: dict, macro: dict,
                        pnl: dict, earnings: list, market_mode: dict,
-                       cvar_trend: str) -> str:
+                       cvar_trend: str, portfolio_source: str = "") -> str:
 
     summary = build_executive_summary(evaluation, market_mode, pnl, macro)
     date_str = datetime.now().strftime("%A %d %b, %H:%M").capitalize()
@@ -491,6 +537,9 @@ def build_full_message(metrics: dict, evaluation: dict, macro: dict,
         f"{market_mode['rebal']}\n"
     )
 
+    if portfolio_source:
+        msg += f"\n<i>📡 Datos: {portfolio_source}</i>"
+
     return msg
 
 
@@ -501,13 +550,20 @@ def run_full_briefing(silent: bool = False) -> dict:
         print(f"\n📊 Morning Briefing | {datetime.now().strftime('%Y-%m-%d %H:%M')}\n")
 
     try:
-        # Datos
+        # Portfolio real (con fallback a pesos manuales)
+        real_portfolio, real_nav, portfolio_source = build_portfolio_from_etoro()
+        portfolio = real_portfolio or PORTFOLIO
+        nav_eur   = real_nav       or NAV_EUR
+        if not silent:
+            print(f"  📡 {portfolio_source}")
+
+        # Datos de mercado
         closes = get_market_data()
-        port_ret, ret_df = compute_portfolio_returns(closes)
+        port_ret, ret_df = compute_portfolio_returns(closes, portfolio)
 
         # CVaR
         metrics    = compute_cvar(port_ret)
-        evaluation = evaluate_risk(metrics)
+        evaluation = evaluate_risk(metrics, nav_eur)
         save_gate_status(evaluation)
 
         # Historial CVaR
@@ -518,12 +574,12 @@ def run_full_briefing(silent: bool = False) -> dict:
         macro = get_macro_context(closes)
 
         # P&L ayer
-        pnl = get_yesterday_pnl(closes)
+        pnl = get_yesterday_pnl(closes, portfolio, nav_eur)
 
         # Earnings
         if not silent:
             print("  Buscando earnings próximos...")
-        earnings = get_upcoming_earnings()
+        earnings = get_upcoming_earnings(portfolio)
 
         # Modo de mercado
         market_mode = get_market_mode(macro, evaluation["cvar_pct"] / 100)
@@ -541,7 +597,7 @@ def run_full_briefing(silent: bool = False) -> dict:
 
         # Enviar Telegram
         msg  = build_full_message(metrics, evaluation, macro, pnl,
-                                  earnings, market_mode, cvar_trend)
+                                  earnings, market_mode, cvar_trend, portfolio_source)
         sent = send_telegram(msg)
 
         if not silent:
