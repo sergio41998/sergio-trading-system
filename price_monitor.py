@@ -77,22 +77,20 @@ def get_current_prices(instrument_ids: list) -> dict:
     """
     Obtiene precios actuales de múltiples instrumentos.
     Retorna dict {instrumentId: precio_actual}
+    Fuente primaria: eToro API (posiciones abiertas).
+    Fuente secundaria: yfinance para tickers sin posición aún.
     """
     prices = {}
     try:
-        # Usar WebSocket o REST quotes según disponibilidad
         data = api_get(f"/trading/info/{MODE}/pnl")
         cp   = data.get("clientPortfolio", {})
 
-        # Extraer precios del portfolio abierto
         for p in cp.get("positions", []):
             iid = p.get("instrumentID")
             if iid in instrument_ids:
-                pnl      = p.get("unrealizedPnL", {})
-                close    = pnl.get("closeRate", 0)
+                close = p.get("unrealizedPnL", {}).get("closeRate", 0)
                 prices[iid] = close
 
-        # También buscar en mirrors
         for m in cp.get("mirrors", []):
             for p in m.get("positions", []):
                 iid = p.get("instrumentID")
@@ -102,7 +100,30 @@ def get_current_prices(instrument_ids: list) -> dict:
                         prices[iid] = close
 
     except Exception as e:
-        print(f"  [ERROR] Precios: {e}")
+        print(f"  [ERROR] Precios eToro: {e}")
+
+    # Tickers sin precio desde eToro (posición no abierta aún) → yfinance
+    missing_ids = [iid for iid in instrument_ids if not prices.get(iid)]
+    if missing_ids:
+        missing_map = {iid: INSTRUMENT_MAP[iid] for iid in missing_ids if iid in INSTRUMENT_MAP}
+        if missing_map:
+            try:
+                import yfinance as yf
+                yf_symbols = list(missing_map.values())
+                raw    = yf.download(yf_symbols, period="1d", progress=False, auto_adjust=True)
+                closes = raw["Close"] if "Close" in raw else raw
+                for iid, ticker in missing_map.items():
+                    try:
+                        col   = closes[ticker] if hasattr(closes, "columns") and ticker in closes.columns else closes
+                        price = float(col.dropna().iloc[-1])
+                        if price:
+                            prices[iid] = price
+                            print(f"    {ticker}: ${price:.2f} (yfinance — nueva posición)")
+                    except Exception:
+                        pass
+            except Exception as e:
+                print(f"  [WARN] yfinance precios: {e}")
+
     return prices
 
 
