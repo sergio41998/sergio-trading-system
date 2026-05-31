@@ -98,6 +98,46 @@ def build_portfolio_from_etoro() -> tuple:
         return None, None, "pesos manuales (fallback)"
 
 
+# ─── Prediction Markets section (opcional) ────────────────────────────────────
+
+def get_prediction_section() -> str:
+    """
+    Importa señales de prediction_signal.py y devuelve una sección compacta
+    para el Morning Briefing. Retorna "" si falla — no rompe el briefing.
+    """
+    try:
+        from prediction_signal import get_prediction_signals, build_prediction_message  # noqa: F401
+        signals = get_prediction_signals(use_cache=True)
+        if not signals:
+            return ""
+
+        active = [s for s in signals.values() if s.get("source") != "unavailable"]
+        if not active:
+            return ""
+
+        lines   = ["🔮 <b>Prediction Markets</b>"]
+        sources = set()
+        for s in active:
+            lines.append(s["telegram_line"])
+            src = s.get("source", "")
+            if src:
+                sources.add(src.capitalize())
+
+        nd_count = len(signals) - len(active)
+        src_str  = " · ".join(sorted(sources))
+        footer   = f"<i>{src_str}"
+        if nd_count:
+            footer += f" | {nd_count} sin mercado activo"
+        footer  += "</i>"
+        lines.append(footer)
+
+        return "\n".join(lines)
+
+    except Exception as e:
+        print(f"  ⚠️  Prediction Markets no disponible: {e}")
+        return ""
+
+
 # ─── Telegram ──────────────────────────────────────────────────────────────────
 
 def send_telegram(message: str) -> bool:
@@ -493,7 +533,8 @@ def build_executive_summary(evaluation: dict, market_mode: dict,
 
 def build_full_message(metrics: dict, evaluation: dict, macro: dict,
                        pnl: dict, earnings: list, market_mode: dict,
-                       cvar_trend: str, portfolio_source: str = "") -> str:
+                       cvar_trend: str, portfolio_source: str = "",
+                       prediction_section: str = "") -> str:
 
     summary = build_executive_summary(evaluation, market_mode, pnl, macro)
     date_str = datetime.now().strftime("%A %d %b, %H:%M").capitalize()
@@ -526,6 +567,10 @@ def build_full_message(metrics: dict, evaluation: dict, macro: dict,
 
     # Macro
     msg += f"🌍 <b>Macro</b>\n{macro_to_text(macro)}\n\n"
+
+    # Prediction Markets
+    if prediction_section:
+        msg += prediction_section + "\n\n"
 
     # Earnings
     msg += f"📅 <b>Earnings próximos 7 días</b>\n{earnings_to_text(earnings)}\n\n"
@@ -584,6 +629,11 @@ def run_full_briefing(silent: bool = False) -> dict:
         # Modo de mercado
         market_mode = get_market_mode(macro, evaluation["cvar_pct"] / 100)
 
+        # Prediction Markets (best-effort, no rompe el briefing si falla)
+        if not silent:
+            print("  Obteniendo señales prediction markets...")
+        prediction_section = get_prediction_section()
+
         # Mostrar en consola
         if not silent:
             print(f"\n  {market_mode['color']} Modo: {market_mode['mode']}")
@@ -597,7 +647,8 @@ def run_full_briefing(silent: bool = False) -> dict:
 
         # Enviar Telegram
         msg  = build_full_message(metrics, evaluation, macro, pnl,
-                                  earnings, market_mode, cvar_trend, portfolio_source)
+                                  earnings, market_mode, cvar_trend, portfolio_source,
+                                  prediction_section)
         sent = send_telegram(msg)
 
         if not silent:
