@@ -360,7 +360,7 @@ def get_upcoming_earnings(portfolio=None) -> list:
     today    = datetime.today().date()
     week_out = today + timedelta(days=7)
 
-    for ticker in list(port.keys())[:15]:  # top 15 posiciones
+    for ticker in list(port.keys()):
         try:
             yf_ticker = YF_TICKER_MAP.get(ticker, ticker)
             tk        = yf.Ticker(yf_ticker)
