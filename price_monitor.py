@@ -1,4 +1,5 @@
 """
+from earnings_blackout import is_in_blackout, get_blackout_status
 Componente 1 + 2: Monitor de precios + Órdenes condicionales
 Sistema de decisión humana + ejecución automática para Sergio
 
@@ -347,6 +348,12 @@ def run_monitor():
                 order_key     = f"{ticker}_{order['trigger_price']}"
 
                 if order_key in executed_this_session:
+                    continue
+
+                # Earnings blackout: saltar órdenes cerca de earnings
+                if is_in_blackout(ticker):
+                    status = get_blackout_status(ticker)
+                    print(f"    {ticker}: 🔴 BLACKOUT — {status['reason']} (orden saltada)")
                     continue
 
                 current_price = prices.get(instrument_id)
