@@ -32,12 +32,33 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
 SCOUT_LOG = "scout_opportunities.jsonl"
 
-# Tu portfolio actual — para no recomendar lo que ya tienes
+# Fallback estático — se usa si la API de eToro no está disponible
 CURRENT_PORTFOLIO = {
     "NVDA","AMD","TSM","ASML","AVGO","UCTT","PANW","CRWD","RHM","RTX",
     "NOC","BWXT","VST","VRT","ERJ","PLTR","GOOG","MSFT","AMZN","KO",
     "SMFG","GILD","AIR","IBE","CABK","IAG","LNVGY","UNH","OKLO","AAPL"
 }
+
+
+def load_portfolio_tickers_from_etoro() -> set:
+    """
+    Obtiene tickers actuales del portfolio desde eToro API.
+    Retorna set de tickers, o CURRENT_PORTFOLIO como fallback.
+    """
+    try:
+        from etoro_client import get_portfolio
+        from config import INSTRUMENT_MAP
+        data    = get_portfolio()
+        cp      = data.get("clientPortfolio", {})
+        tickers = {INSTRUMENT_MAP[p["instrumentID"]]
+                   for p in cp.get("positions", [])
+                   if p.get("instrumentID") in INSTRUMENT_MAP}
+        if tickers:
+            print(f"  📡 Portfolio real: {len(tickers)} tickers cargados")
+            return tickers
+    except Exception as e:
+        print(f"  ⚠️  Usando portfolio manual como fallback: {e}")
+    return CURRENT_PORTFOLIO
 
 # Criterios de calidad mínimos
 MIN_MARKET_CAP_B  = 1.0    # mínimo $1B market cap
@@ -217,10 +238,11 @@ def analyze_candidate(ticker: str) -> dict:
         return None
 
 
-def screen_thesis(thesis_key: str, thesis: dict, top_n: int = 3) -> list:
+def screen_thesis(thesis_key: str, thesis: dict, top_n: int = 3,
+                  current_portfolio: set = None) -> list:
     """Analiza todos los candidatos de una tesis y devuelve los mejores."""
-    candidates = [t for t in thesis["candidatos"]
-                  if t not in CURRENT_PORTFOLIO]
+    portfolio  = current_portfolio or CURRENT_PORTFOLIO
+    candidates = [t for t in thesis["candidatos"] if t not in portfolio]
 
     print(f"\n  {thesis['emoji']} {thesis['nombre']} — analizando {len(candidates)} candidatos...")
 
@@ -327,6 +349,8 @@ def run_scout(thesis_filter: str = None, quick: bool = False) -> dict:
     print(f"\n🔭 Opportunity Scout | {date_str}")
     print(f"   Buscando ideas alineadas con tu portfolio...\n")
 
+    current_portfolio = load_portfolio_tickers_from_etoro()
+
     theses_to_scan = THESIS_UNIVERSE
     if thesis_filter:
         theses_to_scan = {k: v for k, v in THESIS_UNIVERSE.items()
@@ -338,7 +362,8 @@ def run_scout(thesis_filter: str = None, quick: bool = False) -> dict:
 
     results_by_thesis = {}
     for thesis_key, thesis in theses_to_scan.items():
-        top = screen_thesis(thesis_key, thesis, top_n=top_n)
+        top = screen_thesis(thesis_key, thesis, top_n=top_n,
+                            current_portfolio=current_portfolio)
         results_by_thesis[thesis_key] = top
 
     # Mostrar en consola

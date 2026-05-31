@@ -126,15 +126,57 @@ def get_cvar_status() -> dict:
         return json.load(f)
 
 
+# ─── Posiciones reales desde eToro API ─────────────────────────────────────────
+
+def load_positions_from_etoro() -> dict:
+    """
+    Carga posiciones reales desde eToro API.
+    Retorna dict {ticker: (invested_eur, pl_pct, True)} compatible con CURRENT_POSITIONS.
+    Retorna None si falla — el caller cae a CURRENT_POSITIONS como fallback.
+    """
+    try:
+        from etoro_client import get_portfolio
+        from config import INSTRUMENT_MAP
+
+        data = get_portfolio()
+        cp   = data.get("clientPortfolio", {})
+
+        grouped = {}
+        for p in cp.get("positions", []):
+            ticker = INSTRUMENT_MAP.get(p.get("instrumentID"))
+            if not ticker:
+                continue
+            grouped.setdefault(ticker, {"invested": 0.0, "pnl": 0.0})
+            grouped[ticker]["invested"] += p.get("amount", 0)
+            grouped[ticker]["pnl"]      += p.get("unrealizedPnL", {}).get("pnL", 0)
+
+        positions = {}
+        for ticker, v in grouped.items():
+            invested_eur = round(v["invested"] / 1.08, 0)
+            pl_pct       = round(v["pnl"] / v["invested"] * 100, 1) if v["invested"] else 0.0
+            positions[ticker] = (invested_eur, pl_pct, True)
+
+        if positions:
+            print(f"  📡 Portfolio real cargado: {len(positions)} posiciones")
+            return positions
+
+    except Exception as e:
+        print(f"  ⚠️  No se pudo cargar portfolio real: {e}")
+        print(f"  → Usando CURRENT_POSITIONS como fallback")
+
+    return None
+
+
 # ─── Análisis de posiciones perdedoras ─────────────────────────────────────────
 
-def find_positions_to_close(signals: dict) -> list:
+def find_positions_to_close(signals: dict, positions: dict = None) -> list:
     """
     Identifica posiciones candidatas a cerrar.
     Criterio: pérdida > umbral Y señal SELL o tesis rota.
     """
+    pos      = positions or CURRENT_POSITIONS
     to_close = []
-    for ticker, (invested, pl_pct, tesis_intacta) in CURRENT_POSITIONS.items():
+    for ticker, (invested, pl_pct, tesis_intacta) in pos.items():
         signal_data = signals.get(ticker, {})
         signal      = signal_data.get("signal", "HOLD")
         confidence  = signal_data.get("confidence", "LOW")
@@ -171,15 +213,17 @@ def find_positions_to_close(signals: dict) -> list:
 
 # ─── Selección de mejor oportunidad ────────────────────────────────────────────
 
-def find_best_opportunity(signals: dict, amount_eur: float, cvar_status: dict) -> dict:
+def find_best_opportunity(signals: dict, amount_eur: float, cvar_status: dict,
+                          positions: dict = None) -> dict:
     """
     Encuentra la mejor oportunidad de inversión para el importe dado.
     Combina señales de TradingAgents con análisis del portfolio actual.
     """
+    pos        = positions or CURRENT_POSITIONS
     candidates = []
 
     # Candidatos 1: Ampliar posiciones existentes con señal BUY
-    for ticker, (invested, pl_pct, tesis_intacta) in CURRENT_POSITIONS.items():
+    for ticker, (invested, pl_pct, tesis_intacta) in pos.items():
         signal_data = signals.get(ticker, {})
         signal      = signal_data.get("signal", "HOLD")
         confidence  = signal_data.get("confidence", "LOW")
@@ -270,26 +314,29 @@ def generate_recommendation(amount_eur: float) -> dict:
     print(f"\n💼 Investment Advisor | €{amount_eur:.0f} disponibles")
     print(f"   {datetime.now().strftime('%Y-%m-%d %H:%M')}\n")
 
-    # 1. Cargar señales
+    # 1. Portfolio real (con fallback a CURRENT_POSITIONS)
+    positions = load_positions_from_etoro() or CURRENT_POSITIONS
+
+    # 2. Cargar señales
     signals = load_latest_signals()
     if not signals:
         print("  ⚠️  Sin señales de TradingAgents. Ejecuta primero trading_agents_etoro.py")
         print("  Usando análisis básico del portfolio...")
 
-    # 2. CVaR status
+    # 3. CVaR status
     cvar_status = get_cvar_status()
     print(f"  🛡️  CVaR Gate: {cvar_status.get('level', 'DESCONOCIDO')}")
 
-    # 3. Posiciones a cerrar
-    to_close = find_positions_to_close(signals)
+    # 4. Posiciones a cerrar
+    to_close = find_positions_to_close(signals, positions)
     if to_close:
         print(f"\n  🔴 Posiciones candidatas a cerrar ({len(to_close)}):")
         for p in to_close:
             print(f"    {p['ticker']:6} | {p['pl_pct']:.1f}% | {p['reason']}")
             print(f"           Recuperarías: €{p['capital_recovered']:.0f} (pérdida: €{p['loss_eur']:.0f})")
 
-    # 4. Mejor oportunidad
-    opportunity = find_best_opportunity(signals, amount_eur, cvar_status)
+    # 5. Mejor oportunidad
+    opportunity = find_best_opportunity(signals, amount_eur, cvar_status, positions)
 
     return {
         "amount_original": amount_eur,
