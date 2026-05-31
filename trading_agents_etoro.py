@@ -52,8 +52,8 @@ LOG_FILE = "trading_decisions.jsonl"
 def build_agent_config() -> dict:
     config = DEFAULT_CONFIG.copy()
     config["llm_provider"]    = "anthropic"
-    config["deep_think_llm"]  = "claude-sonnet-4-6"
-    config["quick_think_llm"] = "claude-sonnet-4-6"
+    config["deep_think_llm"]  = "claude-haiku-4-5-20251001"
+    config["quick_think_llm"] = "claude-haiku-4-5-20251001"
     config["max_debate_rounds"] = 1     # 1 ronda = más rápido y barato
     config["checkpoint_enabled"] = True  # Aprende de decisiones pasadas
     return config
@@ -182,7 +182,7 @@ def main():
     # Inicializar grafo de agentes
     config = build_agent_config()
     graph  = TradingAgentsGraph(debug=False, config=config)
-    print("✅ TradingAgents inicializado con Claude Sonnet 4\n")
+    print("✅ TradingAgents inicializado con Claude Haiku 4.5\n")
 
     # Leer portfolio actual de eToro
     try:
