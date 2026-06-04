@@ -138,6 +138,24 @@ def get_prediction_section() -> str:
         return ""
 
 
+# ─── Smart Money section (solo lunes) ─────────────────────────────────────────
+
+def get_smart_money_section_for_briefing() -> str:
+    """
+    Retorna la sección 🏛️ Smart Money para el Morning Briefing.
+    Solo se incluye los LUNES (datos trimestrales — no tiene sentido repetir a diario).
+    Retorna "" cualquier otro día o si falla — no rompe el briefing.
+    """
+    if datetime.now().weekday() != 0:  # 0 = lunes
+        return ""
+    try:
+        from smart_money import get_smart_money_section
+        return get_smart_money_section()
+    except Exception as e:
+        print(f"  ⚠️  Smart Money no disponible: {e}")
+        return ""
+
+
 # ─── Telegram ──────────────────────────────────────────────────────────────────
 
 def send_telegram(message: str) -> bool:
@@ -534,7 +552,8 @@ def build_executive_summary(evaluation: dict, market_mode: dict,
 def build_full_message(metrics: dict, evaluation: dict, macro: dict,
                        pnl: dict, earnings: list, market_mode: dict,
                        cvar_trend: str, portfolio_source: str = "",
-                       prediction_section: str = "") -> str:
+                       prediction_section: str = "",
+                       smart_money_section: str = "") -> str:
 
     summary = build_executive_summary(evaluation, market_mode, pnl, macro)
     date_str = datetime.now().strftime("%A %d %b, %H:%M").capitalize()
@@ -571,6 +590,10 @@ def build_full_message(metrics: dict, evaluation: dict, macro: dict,
     # Prediction Markets
     if prediction_section:
         msg += prediction_section + "\n\n"
+
+    # Smart Money (solo lunes)
+    if smart_money_section:
+        msg += smart_money_section + "\n\n"
 
     # Earnings
     msg += f"📅 <b>Earnings próximos 7 días</b>\n{earnings_to_text(earnings)}\n\n"
@@ -634,6 +657,13 @@ def run_full_briefing(silent: bool = False) -> dict:
             print("  Obteniendo señales prediction markets...")
         prediction_section = get_prediction_section()
 
+        # Smart Money — solo lunes, usa caché 24h
+        smart_money_section = ""
+        if datetime.now().weekday() == 0:
+            if not silent:
+                print("  Obteniendo señales smart money (lunes)...")
+            smart_money_section = get_smart_money_section_for_briefing()
+
         # Mostrar en consola
         if not silent:
             print(f"\n  {market_mode['color']} Modo: {market_mode['mode']}")
@@ -648,7 +678,7 @@ def run_full_briefing(silent: bool = False) -> dict:
         # Enviar Telegram
         msg  = build_full_message(metrics, evaluation, macro, pnl,
                                   earnings, market_mode, cvar_trend, portfolio_source,
-                                  prediction_section)
+                                  prediction_section, smart_money_section)
         sent = send_telegram(msg)
 
         if not silent:
