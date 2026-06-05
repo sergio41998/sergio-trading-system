@@ -135,7 +135,7 @@ def load_positions_from_etoro() -> dict:
     Retorna None si falla — el caller cae a CURRENT_POSITIONS como fallback.
     """
     try:
-        from etoro_client import get_portfolio
+        from etoro_client import get_portfolio, get_eur_usd_rate
         from config import INSTRUMENT_MAP
 
         data = get_portfolio()
@@ -150,9 +150,10 @@ def load_positions_from_etoro() -> dict:
             grouped[ticker]["invested"] += p.get("amount", 0)
             grouped[ticker]["pnl"]      += p.get("unrealizedPnL", {}).get("pnL", 0)
 
+        eur_usd  = get_eur_usd_rate()
         positions = {}
         for ticker, v in grouped.items():
-            invested_eur = round(v["invested"] / 1.08, 0)
+            invested_eur = round(v["invested"] / eur_usd, 0)
             pl_pct       = round(v["pnl"] / v["invested"] * 100, 1) if v["invested"] else 0.0
             positions[ticker] = (invested_eur, pl_pct, True)
 

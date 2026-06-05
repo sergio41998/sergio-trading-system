@@ -66,7 +66,7 @@ def build_portfolio_from_etoro() -> tuple:
     Si falla, retorna (None, None, "pesos manuales (fallback)").
     """
     try:
-        from etoro_client import get_portfolio as _get_portfolio, get_account_balance, INSTRUMENT_MAP
+        from etoro_client import get_portfolio as _get_portfolio, get_account_balance, get_eur_usd_rate, INSTRUMENT_MAP
 
         data    = _get_portfolio()
         account = get_account_balance()
@@ -86,11 +86,12 @@ def build_portfolio_from_etoro() -> tuple:
 
         weights = {t: amt / total for t, amt in amounts.items()}
 
-        # eToro reporta en USD — convertir a EUR con tasa aproximada
+        # eToro reporta en USD — convertir a EUR con tipo de cambio real
+        eur_usd = get_eur_usd_rate()
         nav_usd = account.get("invested", 0) + account.get("unrealizedPnL", 0)
-        nav_eur = round(nav_usd / 1.08, 0) if nav_usd else NAV_EUR
+        nav_eur = round(nav_usd / eur_usd, 0) if nav_usd else NAV_EUR
 
-        return weights, nav_eur, f"portfolio real ({len(weights)} tickers, €{nav_eur:,.0f})"
+        return weights, nav_eur, f"portfolio real ({len(weights)} tickers, €{nav_eur:,.0f} @ {eur_usd:.4f})"
 
     except Exception as e:
         print(f"  ⚠️  No se pudo cargar portfolio real: {e}")

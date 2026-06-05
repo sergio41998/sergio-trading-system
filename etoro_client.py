@@ -18,6 +18,29 @@ USER_KEY = os.environ.get("ETORO_USER_KEY", "YOUR_USER_KEY_HERE")
 
 from config import INSTRUMENT_MAP
 
+# Caché por sesión — yfinance solo se llama una vez por proceso
+_eur_usd_cache: float | None = None
+
+
+def get_eur_usd_rate() -> float:
+    """
+    Tipo de cambio EUR/USD en tiempo real vía yfinance.
+    Caché de sesión: solo una llamada de red por proceso.
+    Fallback a 1.12 si yfinance no responde.
+    """
+    global _eur_usd_cache
+    if _eur_usd_cache:
+        return _eur_usd_cache
+    try:
+        import yfinance as yf
+        hist = yf.Ticker("EURUSD=X").history(period="1d")
+        if not hist.empty:
+            _eur_usd_cache = float(hist["Close"].iloc[-1])
+            return _eur_usd_cache
+    except Exception:
+        pass
+    return 1.12  # fallback conservador
+
 
 def _headers():
     return {
@@ -63,10 +86,13 @@ def print_account(account):
     invested = account.get("invested", 0)
     pl       = account.get("unrealizedPnL", 0)
     pl_pct   = (pl / invested * 100) if invested else 0
+    rate     = get_eur_usd_rate()
+    inv_eur  = invested / rate
+    pl_eur   = pl / rate
     print(f"\n{'─'*45}")
     print(f"  Modo         : {MODE.upper()}")
-    print(f"  Invertido    : ${invested:,.2f}")
-    print(f"  P&L abierto  : ${pl:,.2f}  ({pl_pct:.2f}%)")
+    print(f"  Invertido    : €{inv_eur:,.2f}  (${invested:,.2f} @ {rate:.4f})")
+    print(f"  P&L abierto  : €{pl_eur:,.2f}  ({pl_pct:.2f}%)")
     print(f"{'─'*45}\n")
 
 def print_portfolio(data):
@@ -94,10 +120,15 @@ def print_portfolio(data):
             pct = (pl / amt * 100) if amt else 0
             rows.append([ticker, f"${amt:.0f}", f"${pl:.2f}", f"{pct:.1f}%"])
 
-        rows.sort(key=lambda r: float(r[2].replace("$","").replace("-","")), reverse=True)
-        print(f"📌 Posiciones ({len(grouped)} tickers, {len(positions)} tramos):")
-        print(tabulate(rows,
-                       headers=["Ticker", "Invertido", "P&L $", "P&L %"],
+        rate = get_eur_usd_rate()
+        rows_eur = [
+            [t, f"€{v['invested']/rate:.0f}", f"€{v['pnl']/rate:.2f}", f"{(v['pnl']/v['invested']*100) if v['invested'] else 0:.1f}%"]
+            for t, v in grouped.items()
+        ]
+        rows_eur.sort(key=lambda r: float(r[2].replace("€","").replace("-","")), reverse=True)
+        print(f"📌 Posiciones ({len(grouped)} tickers, {len(positions)} tramos) — USD→EUR @ {rate:.4f}:")
+        print(tabulate(rows_eur,
+                       headers=["Ticker", "Invertido", "P&L €", "P&L %"],
                        tablefmt="rounded_outline"))
 
     if mirrors:

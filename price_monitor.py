@@ -205,8 +205,9 @@ def execute_order(order: dict, current_price: float) -> dict:
     if not instrument_id:
         return {"error": f"Ticker {ticker} no encontrado en mapa de instrumentos"}
 
-    # Convertir EUR a USD aproximado (ajustar con tipo de cambio real si necesario)
-    amount_usd = amount_eur * 1.08
+    # Convertir EUR a USD con tipo de cambio real
+    from etoro_client import get_eur_usd_rate
+    amount_usd = amount_eur * get_eur_usd_rate()
 
     if MODE == "demo":
         result = {
