@@ -23,6 +23,7 @@ from datetime import datetime, date
 # ─── eToro client (importado desde Fase 1) ──────────────────────────────────────
 # Asegúrate de tener etoro_client.py en el mismo directorio
 from etoro_client import get_portfolio, get_account_balance, search_instrument
+from config import INSTRUMENT_MAP
 
 # ─── TradingAgents ──────────────────────────────────────────────────────────────
 try:
@@ -35,16 +36,77 @@ except ImportError:
 
 # ─── Config ────────────────────────────────────────────────────────────────────
 
-# Tu cartera high-conviction en eToro
-PORTFOLIO_TICKERS = [
-    "NVDA", "PLTR", "ASML", "TSM", "MSFT",
-    "GOOG", "AMZN", "CVX", "SMCI"
+WATCHLIST_TICKERS = [
+    "MU", "DDOG", "FSLR", "AXON", "SNOW",
+    "RKLB", "IRDM", "ASTS", "TE",
 ]
 
-# Tickers candidatos a nuevas posiciones (próximas entradas según análisis previo)
-WATCHLIST_TICKERS = ["MU", "DDOG", "FSLR", "AXON", "SNOW"]
+SCOUT_TOP_N       = 3
+SCOUT_MIN_SCORE   = 85
+SCOUT_MAX_AGE_DAYS = 7
 
 LOG_FILE = "trading_decisions.jsonl"
+
+
+# ─── Portfolio real desde eToro ─────────────────────────────────────────────────
+
+def build_portfolio_tickers_from_etoro() -> list:
+    try:
+        data = get_portfolio()
+        cp   = data.get("clientPortfolio", {})
+        tickers = list({
+            INSTRUMENT_MAP[p["instrumentID"]]
+            for p in cp.get("positions", [])
+            if p.get("instrumentID") in INSTRUMENT_MAP
+        })
+        if tickers:
+            print(f"  📡 Cartera real: {len(tickers)} tickers desde eToro API")
+            return sorted(tickers)
+    except Exception as e:
+        print(f"  ⚠️  API eToro no disponible: {e}")
+    fallback = sorted(INSTRUMENT_MAP.values())
+    print(f"  📋 Fallback: {len(fallback)} tickers desde INSTRUMENT_MAP")
+    return fallback
+
+
+# ─── Scout candidates ────────────────────────────────────────────────────────────
+
+def get_scout_candidates(portfolio_tickers: list, watchlist_tickers: list) -> list:
+    scout_log = "scout_opportunities.jsonl"
+    if not os.path.exists(scout_log):
+        print("  ⚠️  Scout: sin log. Ejecuta: python3.11 opportunity_scout.py")
+        return []
+
+    entries = []
+    with open(scout_log) as f:
+        for line in f:
+            try:
+                entries.append(json.loads(line))
+            except Exception:
+                pass
+
+    if not entries:
+        return []
+
+    latest = entries[-1]
+    age_days = (datetime.now() - datetime.fromisoformat(latest["date"])).days
+    if age_days > SCOUT_MAX_AGE_DAYS:
+        print(f"  ⚠️  Scout: log obsoleto ({age_days}d). Ejecuta: python3.11 opportunity_scout.py")
+        return []
+
+    excluded = set(portfolio_tickers) | set(watchlist_tickers)
+    candidates = [
+        c
+        for thesis_candidates in latest["results"].values()
+        for c in thesis_candidates
+        if c["score"] >= SCOUT_MIN_SCORE and c["ticker"] not in excluded
+    ]
+    candidates.sort(key=lambda x: x["score"], reverse=True)
+    tickers = [c["ticker"] for c in candidates[:SCOUT_TOP_N]]
+
+    if tickers:
+        print(f"  🔭 Scout inyecta: {tickers} (score≥{SCOUT_MIN_SCORE}, log: {latest['date'][:10]})")
+    return tickers
 
 
 # ─── TradingAgents config ───────────────────────────────────────────────────────
@@ -173,7 +235,6 @@ def reconcile_with_portfolio(signals: list, portfolio: dict) -> list:
 
 def main():
     print(f"\n🤖 TradingAgents + eToro | {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-    print(f"   Tickers a analizar: {PORTFOLIO_TICKERS + WATCHLIST_TICKERS}\n")
 
     if not AGENTS_AVAILABLE:
         print("Instala TradingAgents primero:\n  pip install tradingagents-framework")
@@ -194,11 +255,21 @@ def main():
         print(f"⚠️  No se pudo conectar a eToro API: {e}")
         portfolio = {"positions": []}
 
-    # Analizar todos los tickers
-    all_tickers = PORTFOLIO_TICKERS + WATCHLIST_TICKERS
+    # Universo: cartera real + watchlist manual + Scout
+    portfolio_tickers = build_portfolio_tickers_from_etoro()
+    scout_tickers     = get_scout_candidates(portfolio_tickers, WATCHLIST_TICKERS)
+    all_tickers = portfolio_tickers + WATCHLIST_TICKERS + scout_tickers
+
+    print(f"\n   Universo: {len(portfolio_tickers)} cartera + {len(WATCHLIST_TICKERS)} watchlist"
+          f" + {len(scout_tickers)} Scout = {len(all_tickers)} tickers")
+    if scout_tickers:
+        print(f"   Scout: {scout_tickers}")
+    else:
+        print("   Scout: sin datos frescos (log >7d o sin ejecutar)")
+
     signals = []
 
-    print("─" * 60)
+    print("\n" + "─" * 60)
     print("Análisis en curso (puede tardar 2-3 min por ticker)...\n")
 
     for ticker in all_tickers:
