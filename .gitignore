@@ -6,3 +6,7 @@ __pycache__/
 *.pyc
 venv/
 .venv/
+
+# Cachés de runtime (no versionar)
+prediction_cache.json
+smart_money_cache.json
