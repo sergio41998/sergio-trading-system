@@ -61,10 +61,85 @@ def load_portfolio_tickers_from_etoro() -> set:
     return CURRENT_PORTFOLIO
 
 # Criterios de calidad mínimos
-MIN_MARKET_CAP_B  = 1.0    # mínimo $1B market cap
-MIN_AVG_VOLUME    = 500000 # mínimo 500k shares/día
-MAX_BETA          = 4.0    # máximo beta (excluir micro-caps volátiles)
-MIN_BETA          = 0.3    # mínimo beta (queremos growth, no utilities puras)
+MIN_MARKET_CAP_B  = 1.0
+MIN_AVG_VOLUME    = 500000
+MAX_BETA          = 4.0
+MIN_BETA          = 0.3
+
+# ─── Modo defensivo ─────────────────────────────────────────────────────────────
+# None = automático por umbral | True = forzar defensivo | False = forzar normal
+DEFENSIVE_MODE_OVERRIDE = None
+DEFENSIVE_THRESHOLDS    = {"cvar_pct": 3.9, "vix": 25.0}
+
+DEFENSIVE_THESIS_ADDITIONS = {
+    "utilities_defensive": {
+        "nombre":      "Utilities Defensivas",
+        "descripcion": "Eléctricas reguladas estables en incertidumbre",
+        "posiciones":  [],
+        "candidatos":  ["NEE", "DUK", "SO", "D", "AEP"],
+        "emoji":       "🏭",
+    },
+    "gold_miners": {
+        "nombre":      "Oro y Mineras",
+        "descripcion": "Refugio en crisis e inflación",
+        "posiciones":  [],
+        "candidatos":  ["GLD", "GDX", "NEM", "AEM", "WPM", "FNV"],
+        "emoji":       "🥇",
+    },
+    "consumer_staples": {
+        "nombre":      "Consumo Básico",
+        "descripcion": "Defensivos con demanda inelástica",
+        "posiciones":  [],
+        "candidatos":  ["KO", "PG", "PEP", "COST", "WMT"],
+        "emoji":       "🛒",
+    },
+    "health_defensive": {
+        "nombre":      "Salud Defensiva",
+        "descripcion": "Farmacéuticas y dispositivos estables",
+        "posiciones":  [],
+        "candidatos":  ["JNJ", "ABT", "MRK", "BMY", "LLY", "MDT"],
+        "emoji":       "🏥",
+    },
+}
+
+# ─── Modo defensivo ─────────────────────────────────────────────────────────────
+
+def resolve_defensive_mode() -> tuple:
+    """
+    Retorna (is_defensive: bool, reason: str).
+    DEFENSIVE_MODE_OVERRIDE gana al automático.
+    """
+    if DEFENSIVE_MODE_OVERRIDE is True:
+        return True, "override manual"
+    if DEFENSIVE_MODE_OVERRIDE is False:
+        return False, ""
+
+    reasons = []
+
+    try:
+        if os.path.exists("cvar_status.json"):
+            with open("cvar_status.json") as f:
+                status = json.load(f)
+            cvar_pct = status.get("cvar_pct", 0)
+            if cvar_pct > DEFENSIVE_THRESHOLDS["cvar_pct"]:
+                reasons.append(f"CVaR {cvar_pct:.1f}%")
+    except Exception:
+        pass
+
+    try:
+        import yfinance as yf
+        hist = yf.Ticker("^VIX").history(period="2d")
+        if not hist.empty:
+            vix = float(hist["Close"].iloc[-1])
+            if vix > DEFENSIVE_THRESHOLDS["vix"]:
+                reasons.append(f"VIX {vix:.1f}")
+    except Exception:
+        pass
+
+    if reasons:
+        return True, " y ".join(reasons)
+    return False, ""
+
 
 # ─── Tesis del portfolio de Sergio ─────────────────────────────────────────────
 
@@ -277,12 +352,12 @@ def format_candidate(c: dict, rank: int) -> str:
     )
 
 
-def build_scout_message(results_by_thesis: dict, date_str: str) -> str:
-    msg = (
-        f"🔭 <b>Opportunity Scout — {date_str}</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"Nuevas ideas alineadas con tu portfolio\n\n"
-    )
+def build_scout_message(results_by_thesis: dict, date_str: str,
+                        defensive_reason: str = "") -> str:
+    msg = f"🔭 <b>Opportunity Scout — {date_str}</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n"
+    if defensive_reason:
+        msg += f"⚠️ Modo defensivo ACTIVO — motivo: {defensive_reason}\n"
+    msg += "Nuevas ideas alineadas con tu portfolio\n\n"
 
     total_candidates = sum(len(v) for v in results_by_thesis.values())
     if total_candidates == 0:
@@ -351,9 +426,16 @@ def run_scout(thesis_filter: str = None, quick: bool = False) -> dict:
 
     current_portfolio = load_portfolio_tickers_from_etoro()
 
-    theses_to_scan = THESIS_UNIVERSE
+    is_defensive, defensive_reason = resolve_defensive_mode()
+
+    theses_to_scan = dict(THESIS_UNIVERSE)
+    if is_defensive and not thesis_filter:
+        theses_to_scan.update(DEFENSIVE_THESIS_ADDITIONS)
+        print(f"  ⚠️  Modo defensivo ACTIVO — motivo: {defensive_reason}")
+        print(f"  Añadidas 4 tesis defensivas al universo de screening\n")
+
     if thesis_filter:
-        theses_to_scan = {k: v for k, v in THESIS_UNIVERSE.items()
+        theses_to_scan = {k: v for k, v in theses_to_scan.items()
                           if thesis_filter.lower() in k.lower()}
         if not theses_to_scan:
             print(f"  ⚠️ Tesis '{thesis_filter}' no encontrada.")
@@ -381,7 +463,8 @@ def run_scout(thesis_filter: str = None, quick: bool = False) -> dict:
     save_scout_log(results_by_thesis)
 
     # Enviar Telegram
-    msg  = build_scout_message(results_by_thesis, date_str)
+    msg  = build_scout_message(results_by_thesis, date_str,
+                               defensive_reason if is_defensive else "")
     sent = send_telegram(msg)
     print(f"\n  📱 Telegram: {'✅ enviado' if sent else '❌ falló'}")
 
