@@ -45,6 +45,12 @@ Calcula CVaR-99 histórico con 60 días de datos (scipy/numpy), evalúa modo de 
 (Normal / Corrección / Crisis), P&L del día anterior, earnings próximos, contexto macro
 (VIX, SPY, EUR/USD, Yield 10Y). Envía todo por Telegram a las 8:50 vía cron.
 Guarda historial en `cvar_history.jsonl` y estado actual en `cvar_status.json`.
+
+Secciones adicionales en el briefing:
+- **🔍 Descubrimientos Scout** — lista top 5 candidatos Scout (score≥85, log≤7d) que
+  no están en cartera. Sin auto-promoción: ascender al watchlist es decisión manual.
+- **⚠️ Modo defensivo ACTIVO** — aparece si CVaR>3.9% o VIX>25 (o override manual),
+  con el motivo explícito. Solo avisa, no opera.
 ```bash
 python3.11 cvar_gate.py             # briefing completo
 python3.11 cvar_gate.py --test      # probar Telegram
@@ -74,7 +80,20 @@ python3.11 earnings_blackout.py --check NVDA   # comprobar ticker específico
 Análisis multi-agente LLM (TradingAgents framework) sobre el portfolio.
 Genera señales BUY/SELL/HOLD con confianza HIGH/MEDIUM/LOW para cada ticker.
 Las guarda en `trading_decisions.jsonl`. No ejecuta ninguna orden — solo genera señales.
-Coste estimado: ~€2-3 por ejecución completa. Ejecutar el **primer domingo del mes**.
+Coste estimado: ~€2-3 por ejecución completa (+~€0.01 por cada ticker Scout extra).
+Ejecutar el **primer domingo del mes** (tras ejecutar el Scout el sábado).
+
+**Universo de análisis — tres capas:**
+1. **Cartera real** — `build_portfolio_tickers_from_etoro()` lee la API de eToro en
+   tiempo real; fallback a `INSTRUMENT_MAP` de `config.py`. CVX y SMCI excluidos.
+2. **Watchlist manual** — `WATCHLIST_TICKERS` (convicción propia, NO se auto-actualiza):
+   `MU, DDOG, FSLR, AXON, SNOW, RKLB, IRDM, ASTS, TE`.
+3. **Descubrimientos Scout** — `get_scout_candidates()` lee `scout_opportunities.jsonl`
+   si tiene ≤7 días, filtra score≥85, deduplica, inyecta top 3. Si el log es más
+   antiguo, devuelve [] con aviso — ejecutar Scout el sábado previo para datos frescos.
+
+Constantes configurables: `SCOUT_TOP_N = 3`, `SCOUT_MIN_SCORE = 85`,
+`SCOUT_MAX_AGE_DAYS = 7`.
 ```bash
 python3.11 trading_agents_etoro.py
 ```
@@ -84,6 +103,17 @@ Screener de nuevas ideas por tesis. Sin LLM — solo yfinance + scoring propio (
 Filtra por market cap >$1B, volumen >500k, beta 0.3-4.0. Puntúa por momentum,
 crecimiento de revenue, márgenes, tamaño. Descarta posiciones ya en portfolio.
 Envía top candidatos por tesis a Telegram. Ejecutar el **sábado antes del análisis**.
+
+**Modo defensivo** — dos estados discretos, sin auto-evolución:
+- **Normal**: screenea las 6 tesis growth habituales.
+- **Defensivo**: AÑADE temporalmente 4 tesis (utilities, oro/mineras, consumo básico,
+  salud defensiva) al universo. Las tesis growth no se eliminan.
+- Disparo automático: `CVaR > 3.9%` O `VIX > 25` (leídos de `cvar_status.json`
+  y yfinance respectivamente).
+- Override manual: `DEFENSIVE_MODE_OVERRIDE` en `opportunity_scout.py`:
+  `None` = auto | `True` = forzar defensivo | `False` = forzar normal.
+  El override siempre gana al automático.
+- El modo solo AVISA — no mueve órdenes, no altera CVaR Gate ni stop-losses.
 ```bash
 python3.11 opportunity_scout.py               # análisis completo (6 tesis)
 python3.11 opportunity_scout.py --quick       # top 2 por tesis, rápido
@@ -121,9 +151,13 @@ Campos clave: `ticker`, `action`, `trigger_price`, `trigger_type` (below/above),
 
 ```
 Sábado        → python3.11 opportunity_scout.py --quick
-                Lee resultados, identifica candidatos interesantes
+                Lee resultados, identifica candidatos
+                (guarda scout_opportunities.jsonl para el domingo)
+                Si modo defensivo activo, añade tesis defensivas automáticamente
 
 Domingo 1º    → python3.11 trading_agents_etoro.py
+                Universo = cartera real (API eToro) + watchlist manual + top 3 Scout (≤7d)
+                Si el log Scout tiene >7d, los descubrimientos no se inyectan — aviso
                 Lee señales en trading_decisions.jsonl
                 python3.11 invest_advisor.py --amount <importe>
                 Editar orders.json con nuevos niveles del mes
