@@ -524,6 +524,77 @@ def load_gate_status() -> dict:
         return json.load(f)
 
 
+# ─── Scout section (Mejora 1b) ─────────────────────────────────────────────────
+
+def get_scout_section() -> str:
+    scout_log = "scout_opportunities.jsonl"
+    if not os.path.exists(scout_log):
+        return ""
+
+    entries = []
+    with open(scout_log) as f:
+        for line in f:
+            try:
+                entries.append(json.loads(line))
+            except Exception:
+                pass
+    if not entries:
+        return ""
+
+    latest   = entries[-1]
+    age_days = (datetime.now() - datetime.fromisoformat(latest["date"])).days
+    if age_days > 7:
+        return ""
+
+    try:
+        from etoro_client import get_portfolio as _gp
+        from config import INSTRUMENT_MAP as _IM
+        data = _gp()
+        cp   = data.get("clientPortfolio", {})
+        in_portfolio = {_IM[p["instrumentID"]]
+                        for p in cp.get("positions", [])
+                        if p.get("instrumentID") in _IM}
+    except Exception:
+        in_portfolio = set()
+
+    candidates = []
+    for thesis_key, thesis_candidates in latest["results"].items():
+        for c in thesis_candidates:
+            if c["score"] >= 85 and c["ticker"] not in in_portfolio:
+                candidates.append((c["ticker"], c["score"], thesis_key))
+
+    candidates.sort(key=lambda x: x[1], reverse=True)
+    if not candidates:
+        return ""
+
+    lines = ["🔍 <b>Descubrimientos Scout este ciclo</b>"]
+    for ticker, score, thesis in candidates[:5]:
+        lines.append(f"  {ticker} ({score}) · {thesis}")
+    lines.append(f"<i>Log: {latest['date'][:10]} — actualiza: python3.11 opportunity_scout.py</i>")
+    return "\n".join(lines)
+
+
+# ─── Modo defensivo notice (Mejora 2) ──────────────────────────────────────────
+
+def get_defensive_mode_notice(cvar_pct: float, vix: float) -> str:
+    try:
+        from opportunity_scout import DEFENSIVE_MODE_OVERRIDE, DEFENSIVE_THRESHOLDS
+        if DEFENSIVE_MODE_OVERRIDE is True:
+            return "⚠️ <b>Modo defensivo ACTIVO</b> — motivo: override manual"
+        if DEFENSIVE_MODE_OVERRIDE is False:
+            return ""
+        reasons = []
+        if cvar_pct > DEFENSIVE_THRESHOLDS["cvar_pct"]:
+            reasons.append(f"CVaR {cvar_pct:.1f}%")
+        if vix > DEFENSIVE_THRESHOLDS["vix"]:
+            reasons.append(f"VIX {vix:.1f}")
+        if reasons:
+            return f"⚠️ <b>Modo defensivo ACTIVO</b> — motivo: {' y '.join(reasons)}"
+    except Exception as e:
+        print(f"  ⚠️  Modo defensivo no disponible: {e}")
+    return ""
+
+
 # ─── Resumen ejecutivo ─────────────────────────────────────────────────────────
 
 def build_executive_summary(evaluation: dict, market_mode: dict,
@@ -554,9 +625,11 @@ def build_full_message(metrics: dict, evaluation: dict, macro: dict,
                        pnl: dict, earnings: list, market_mode: dict,
                        cvar_trend: str, portfolio_source: str = "",
                        prediction_section: str = "",
-                       smart_money_section: str = "") -> str:
+                       smart_money_section: str = "",
+                       scout_section: str = "",
+                       defensive_notice: str = "") -> str:
 
-    summary = build_executive_summary(evaluation, market_mode, pnl, macro)
+    summary  = build_executive_summary(evaluation, market_mode, pnl, macro)
     date_str = datetime.now().strftime("%A %d %b, %H:%M").capitalize()
 
     # Encabezado
@@ -571,6 +644,10 @@ def build_full_message(metrics: dict, evaluation: dict, macro: dict,
         f"{market_mode['color']} <b>Modo mercado: {market_mode['mode']}</b>\n"
         f"{market_mode['desc']}\n\n"
     )
+
+    # Modo defensivo (Mejora 2)
+    if defensive_notice:
+        msg += defensive_notice + "\n\n"
 
     # CVaR
     triggered_str = " ⚠️ GATE ACTIVADO" if evaluation["triggered"] else ""
@@ -591,6 +668,10 @@ def build_full_message(metrics: dict, evaluation: dict, macro: dict,
     # Prediction Markets
     if prediction_section:
         msg += prediction_section + "\n\n"
+
+    # Scout (Mejora 1b)
+    if scout_section:
+        msg += scout_section + "\n\n"
 
     # Smart Money (solo lunes)
     if smart_money_section:
@@ -676,10 +757,17 @@ def run_full_briefing(silent: bool = False) -> dict:
                 print(f"  ⚡ Earnings esta semana: {', '.join(e['ticker'] for e in earnings)}")
             print(f"\n  🎯 {evaluation['action']}")
 
+        # Scout section (Mejora 1b) y aviso modo defensivo (Mejora 2)
+        scout_section    = get_scout_section()
+        defensive_notice = get_defensive_mode_notice(
+            evaluation["cvar_pct"], macro.get("vix", 0)
+        )
+
         # Enviar Telegram
-        msg  = build_full_message(metrics, evaluation, macro, pnl,
-                                  earnings, market_mode, cvar_trend, portfolio_source,
-                                  prediction_section, smart_money_section)
+        msg = build_full_message(metrics, evaluation, macro, pnl,
+                                 earnings, market_mode, cvar_trend, portfolio_source,
+                                 prediction_section, smart_money_section,
+                                 scout_section, defensive_notice)
         sent = send_telegram(msg)
 
         if not silent:
